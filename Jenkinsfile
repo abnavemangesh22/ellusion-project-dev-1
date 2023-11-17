@@ -1,63 +1,71 @@
 pipeline{
-    agent any
+    agent any 
     tools{
         maven 'M3'
     }
+    environment{
+        scannerHome = tool 'SonarScanner'
+    }
     stages{
-        stage('Code Checkout'){
+        stage('Code Pull'){
             steps{
-               git 'https://github.com/abnavemangesh22/MyPetClinic.git'
+                //cleanWs()
+                //sh 'git clone https://github.com/abnavemangesh22/MyNewPetClinic-2.git'
+                git changelog: false, poll: false, url: 'https://github.com/abnavemangesh22/MyNewPetClinic-2.git'
             }
         }
-        stage('Code Test and Compile'){
+        stage('Code Compile'){
             steps{
-                sh 'mvn clean compile test'
+                sh 'mvn clean test'
             }
         }
-        stage('Code Analysis'){
+        stage('Composition Analysis'){
             steps{
-                script{
-                    withSonarQubeEnv(credentialsId: 'sonartocken') {
-                    sh 'mvn sonar:sonar'
-                   }        
-                }
+                dependencyCheck additionalArguments: '--format HTML', odcInstallation: 'dependency'
             }
         }
-        stage('Code Packing'){
+        stage('Static Code Analysis'){
+            steps{
+              script{
+                 withSonarQubeEnv(credentialsId: 'sonar') {
+                    sh 'echo $SONAR_HOST_URL'
+                    sh 'echo $SONAR_AUTH_TOKEN'
+                    sh '${scannerHome}/bin/sonar-scanner -D sonar.projectKey=EllusionProject -Dsonar.java.binaries=target/classes'
+                 }
+              }
+            }
+        }
+        stage('Code Package'){
             steps{
                 sh 'mvn package -Dmaven.test.skip'
             }
         }
-        stage('Nexus Code Upload'){
+        stage('Nexus Uploader'){
             steps{
-              script{
-                  nexusArtifactUploader artifacts: [[artifactId: 'spring-petclinic', classifier: '', file: 'target/spring-petclinic-1.5.2.jar', type: 'jar']], credentialsId: 'nexuscredential', groupId: 'org.springframework.samples', nexusUrl: '192.168.253.129:8081', nexusVersion: 'nexus3', protocol: 'http', repository: 'myrepo-Demo', version: '1.5.2'
-              }
+                nexusArtifactUploader artifacts: [[artifactId: 'spring-petclinic', classifier: '', file: 'target/spring-petclinic-1.5.2.jar', type: 'jar']], credentialsId: 'nexusserver', groupId: 'org.springframework.samples', nexusUrl: '15.206.157.27:32768', nexusVersion: 'nexus3', protocol: 'http', repository: 'maven-releases', version: '1.5.2'
             }
         }
-      stage('Build Docker Image'){
-          steps{
-            sh 'docker build -t mangeshabnave/mypetimage-77:latest .'  
-          }
-       }
-       stage('Push the Iamge to Dockerhub'){
-           steps{
-               withCredentials([usernamePassword(credentialsId: 'dockerhub', passwordVariable: 'password', usernameVariable: 'username')]) {
-                sh "docker login -u ${env.username} -p ${env.password}" 
-                sh "docker push mangeshabnave/mypetimage-77:latest"
-               }
-           }
-       }
-       stage('Running the APP'){
-           steps{
-               sh "ssh -oStrictHostKeyChecking=no root@192.168.253.130 'docker pull mangeshabnave/mypetimage-77'"
-               sh "ssh -oStrictHostKeyChecking=no root@192.168.253.130 'docker run -dit -P mangeshabnave/mypetimage-77'"
-           }
-       }
-    }
-    post{
-        always{
-            junit ' target/surefire-reports/*.xml'
+        stage('Docker Build Activity'){
+            steps{
+                sh 'docker info'
+                sh 'docker ps -a'
+                sh 'docker build -t mangeshabnave/myellusionimage-$BUILD_NUMBER .'
+            }
         }
+        stage('Upload Image to Hub'){
+            steps{
+              withCredentials([usernamePassword(credentialsId: 'dockerhub', passwordVariable: 'password', usernameVariable: 'username')]) {
+                    sh "docker login -u ${env.username} -p ${env.password}"
+                    sh "docker push mangeshabnave/myellusionimage-$BUILD_NUMBER"
+                }  
+            }
+        }
+        stage('Run on the Test Env'){
+            steps{
+                sh 'docker -H tcp://172.31.38.84:2375 pull mangeshabnave/myellusionimage-$BUILD_NUMBER'
+                sh 'docker -H tcp://172.31.38.84:2375 run -dit -P mangeshabnave/myellusionimage-$BUILD_NUMBER'
+            }
+        }
+        
     }
 }
